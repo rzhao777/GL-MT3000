@@ -1,0 +1,9 @@
+config uhttpd 'main'
+	list listen_http '8080'      # HTTP 端口改为 8080
+	list listen_https '4433'     # HTTPS 端口改为 4433
+	option home '/www'
+	option rfc1918_filter '1'
+	option max_requests '3'
+	option cert '/etc/uhttpd.crt'
+	option key '/etc/uhttpd.key'
+	option redirect_https '1'    # 强制跳转 HTTPS
