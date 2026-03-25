@@ -5,7 +5,10 @@ config defaults
 	option nftables_priority '0'
 	option fullcone '1'
 	option flow_offloading '1'
-	option hw_flow_offloading '1' # MT3000 硬件加速开关
+	option hw_flow_offloading '1'
+	option drop_invalid '1'      # 丢弃无效数据包
+	option syn_flood '1'        # 开启 SYN Flood 防御
+	option tcp_syncookies '1'   # 开启 TCP Syncookies
 
 config zone
 	option name 'lan'
@@ -18,12 +21,21 @@ config zone
 	option name 'wan'
 	list network 'wan'
 	list network 'wan6'
-	list network 'wwan'    # 关键：将中继接口加入 WAN 区
+	list network 'wwan'
 	option input 'REJECT'
 	option output 'ACCEPT'
 	option forward 'REJECT'
 	option masq '1'
 	option mtu_fix '1'
+
+# 隐身设置：禁止 WAN 口响应 Ping 探测
+config rule
+	option name 'Allow-Ping'
+	option src 'wan'
+	option proto 'icmp'
+	option icmptype 'echo-request'
+	option family 'ipv4'
+	option target 'DROP'
 
 config forwarding
 	option src 'lan'
