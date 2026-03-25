@@ -1,147 +1,90 @@
-# ============================================================
-# GL-MT3000 (Beryl AX) OpenWrt 25.12 最终整合版
-# 包含：官方功能复刻 + 安全加固 + OpenClash + Passwall
-# ============================================================
-
-name: OpenWrt Builder (GL-MT3000)
+name: Build ImmortalWrt for GL-MT3000
 
 on:
-  workflow_dispatch:
   repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: configs/mt3000.config
+  FILES_DIR: files
+  TZ: Asia/Shanghai
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: write
-
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      REPO_URL: https://github.com/openwrt/openwrt
-      REPO_BRANCH: openwrt-25.12
-      FEEDS_CONF: feeds.conf.default
-      CONFIG_FILE: .config
-      DIY_P1_SH: diy-part1.sh
-      DIY_P2_SH: diy-part2.sh
-      UPLOAD_FIRMWARE: true
-      UPLOAD_RELEASE: true
-      TZ: Asia/Shanghai
-      CCACHE_SIZE: 4G
-      GOPROXY: https://proxy.golang.org,direct
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@v4
 
-    - name: Install Node.js 24
-      uses: actions/setup-node@v5
-      with:
-        node-version: 24
-
-    - name: Maximize Build Space
-      run: |
-        sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
-        sudo docker image prune --all --force
-
-    - name: Install Build Environment
+    - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-        gettext git libncurses-dev libssl-dev python3-setuptools python3-pyelftools rsync unzip zlib1g-dev \
-        swig libpython3-dev qemu-utils mkisofs wget curl zstd
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL https://is.gd/depends_ubuntu_2204)
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: Restore dl Cache
-      uses: actions/cache@v5
-      with:
-        path: /workdir/openwrt/dl
-        key: dl-gl-mt3000-${{ hashFiles('**/feeds.conf.default') }}
-
-    - name: Clone OpenWrt Source
+    - name: Clone source code
       working-directory: /workdir
       run: |
-        rm -rf openwrt
-        git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load Custom Feeds
+    - name: Update & Install feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF /workdir/openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH 2>/dev/null || true
-        cd /workdir/openwrt
-        [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH
-
-    - name: Update & Install Feeds
-      run: |
-        cd /workdir/openwrt
+        cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Apply 25.12 Patches
+    - name: Fix libiwinfo & Dependency Conflicts
       run: |
-        cd /workdir/openwrt
-        # 先拉取 packages 仓库
-        git clone --depth=1 -b master https://github.com/openwrt/packages.git temp
-        
-        # 强制创建目标目录，防止 cp 失败
-        mkdir -p feeds/packages/lang/golang
-        mkdir -p feeds/packages/lang/rust
-        
-        # 复制最新的 golang 和 rust 源码进行覆盖
-        cp -rf temp/lang/golang/* feeds/packages/lang/golang/
-        cp -rf temp/lang/rust/* feeds/packages/lang/rust/
-        
-        rm -rf temp
-        
-        # 修正 Rust 编译参数
-        if [ -f "feeds/packages/lang/rust/Makefile" ]; then
-          sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
-        fi
+        cd openwrt
+        # 强制删除可能导致冲突的旧版索引，解决 libiwinfo20230701 报错
+        find feeds/ -name "libiwinfo*" -exec rm -rf {} +
+        ./scripts/feeds update -i
+        ./scripts/feeds install -a
 
-    - name: Download Packages
-      id: download
+    - name: Load custom configuration
       run: |
-        cd /workdir/openwrt
-        # 如果有自定义配置文件，则将其放入源码目录
-        [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
-        
+        [ -e $FILES_DIR ] && mv $FILES_DIR openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        cd openwrt
         make defconfig
-        echo "Pre-downloading packages (this may take 5-10 minutes)..."
-        
-        make download -j8 V=s || make download -j1 V=s
-        
-        # 移除过小的无效下载
-        find dl -size -1024c -exec rm -f {} \;
-        
-        echo "✓ Packages downloaded"
-        du -sh dl/
 
-    - name: Compile Firmware
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
       id: compile
       run: |
-        cd /workdir/openwrt
-        echo "$(nproc) thread compile"
-        # 第一次尝试多线程编译，失败则切换单线程输出详细日志
-        make -j$(nproc) || make -j1 V=s
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Organize Firmware
-      id: organize
-      if: steps.compile.outputs.status == 'success'
-      run: |
-        cd /workdir/openwrt/bin/targets/mediatek/filogic/
-        mkdir -p $GITHUB_WORKSPACE/firmware_output
-        # 针对 GL-MT3000 的 sysupgrade 固件
-        cp *gl-mt3000*sysupgrade.bin $GITHUB_WORKSPACE/firmware_output/ || cp *.bin $GITHUB_WORKSPACE/firmware_output/
-        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_output" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload Firmware
+    - name: Upload bin directory
       uses: actions/upload-artifact@v4
-      if: steps.organize.outputs.status == 'success'
+      if: steps.compile.outputs.status == 'success'
       with:
-        name: OpenWrt_GL-MT3000_25.12
-        path: ${{ env.FIRMWARE }}
+        name: ImmortalWrt_bin_MT3000
+        path: openwrt/bin
