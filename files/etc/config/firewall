@@ -1,0 +1,30 @@
+config defaults
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option nftables_priority '0'
+	option fullcone '1'
+	option flow_offloading '1'
+	option hw_flow_offloading '1' # MT3000 硬件加速开关
+
+config zone
+	option name 'lan'
+	list network 'lan'
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+
+config zone
+	option name 'wan'
+	list network 'wan'
+	list network 'wan6'
+	list network 'wwan'    # 关键：将中继接口加入 WAN 区
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option masq '1'
+	option mtu_fix '1'
+
+config forwarding
+	option src 'lan'
+	option dest 'wan'
