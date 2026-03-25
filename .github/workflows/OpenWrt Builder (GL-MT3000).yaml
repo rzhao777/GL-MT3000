@@ -11,7 +11,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: master
+  REPO_BRANCH: openwrt 24.10
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: configs/mt3000.config
   FILES_DIR: files
